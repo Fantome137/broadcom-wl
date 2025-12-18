@@ -1,0 +1,39 @@
+#!/bin/sh
+
+# Get the list of kernels from /lib/modules
+KERNEL_DIRS=$(find /lib/modules -maxdepth 1 -type d -name "*" | tail -n +2)
+echo Found the following /lib/modules directories
+echo "$KERNEL_DIRS"
+echo
+
+# This file is required to support a hack in the build process
+mkdir /usr/lib/broadcom-wl-dkms
+cp wlc_hybrid.o_shipped /usr/lib/broadcom-wl-dkms
+echo
+
+# Build the module for each directory in /lib/modules
+for KERNEL_DIR in $KERNEL_DIRS; do
+    KERNEL_VERSION=$(basename "$KERNEL_DIR")
+    echo Building the broadcom-wl module for kernel $KERNEL_VERSION
+    sed -i '' -e 's/`uname -r`/'"$KERNEL_VERSION"'/' Makefile
+    make LLVM=1 clean
+    make LLVM=1 -j$(nproc) 2>&1
+    sed -i '' -e 's/'"$KERNEL_VERSION"'/`uname -r`/' Makefile
+    zstd wl.ko
+    if [ -f wl.ko.zst ]; then
+        mkdir -p $KERNEL_DIR/updates
+        cp -fv wl.ko.zst $KERNEL_DIR/updates
+        depmod $KERNEL_VERSION
+        echo Module installed for kernel $KERNEL_VERSION 
+        echo
+        update-initramfs -c -k $KERNEL_VERSION
+        echo
+        echo Cleaning up
+        make LLVM=1 -C $KERNEL_DIR/build M=`pwd` clean
+    else 
+        echo Module not installed for kernel $KERNEL_VERSION 
+    fi 
+    echo
+done
+
+update-grub
